@@ -84,6 +84,12 @@ st.title("Mullion analysis")
 st.caption("Mullion under superimposed wind loads. Shear, moment, slope and deflection come from "
            "repeated refined trapezoidal-rule integration; curved pressure profiles use a natural cubic spline.")
 
+# Load types sit OUTSIDE the form so choosing "Spline" shows its table straight away
+st.sidebar.subheader("Load types")
+st.sidebar.caption("Up to three loads, added together. Any type can be used more than once, e.g. two trapezoids.")
+kinds = [st.sidebar.selectbox(f"Load {k} type", TYPES, index=TYPES.index("Spline") if k == 1 else 0, key=f"l{k}_type")
+         for k in range(1, N_LOADS + 1)]
+
 with st.sidebar.form("inputs"):
     st.subheader("Beam")
     H = st.number_input("Span H (mm)", min_value=100.0, max_value=20000.0, value=1200.0, step=50.0)
@@ -93,28 +99,29 @@ with st.sidebar.form("inputs"):
     npts = st.slider("Points along the span", 50, 400, 200, step=10)
     support = st.radio("Restraints", SUPPORTS, key="support")
 
-    st.subheader("Loads (added together)")
-    st.caption("Use up to three loads. Any type can be used more than once, e.g. two trapezoids.")
+    st.subheader("Load inputs")
 
     slots = []
     for k in range(1, N_LOADS + 1):
         with st.expander(f"Load {k}", expanded=(k == 1)):
-            kind = st.selectbox("Type", TYPES, index=TYPES.index("Spline") if k == 1 else 0, key=f"l{k}_type")
+            kind = kinds[k - 1]
+            st.caption(f"Type: {kind}")
             p = st.number_input("Pressure (kPa)", value=1.0, step=0.1, key=f"l{k}_p")
             width = st.number_input("Width (mm)", value=1000.0, step=50.0, key=f"l{k}_w")
             st.caption("Width: tributary width for rectangle and spline, panel width for triangle and trapezoid.")
             height = st.number_input("Panel height (mm)", value=1200.0, step=50.0, key=f"l{k}_h")
             st.caption("Panel height is only used by triangle and trapezoid.")
-            table = st.data_editor(
-                pd.DataFrame(DEFAULT_TABLE),
-                num_rows="dynamic", hide_index=True, key=f"l{k}_table",
-                column_config={
-                    "Height (mm)": st.column_config.NumberColumn("Height (mm)", width="small", format="%.0f"),
-                    "Pressure (kPa)": st.column_config.NumberColumn("kPa", width="small", format="%.2f"),
-                },
-            )
-            st.caption("Table is only used when Type is Spline. Enter suction as a positive magnitude: "
-                       "custom_load sets negative pressures to zero.")
+            table = pd.DataFrame(DEFAULT_TABLE)           # placeholder when this load is not a spline
+            if kind == "Spline":                           # pressure table only appears for a spline load
+                table = st.data_editor(
+                    table,
+                    num_rows="dynamic", hide_index=True, key=f"l{k}_table",
+                    column_config={
+                        "Height (mm)": st.column_config.NumberColumn("Height (mm)", width="small", format="%.0f"),
+                        "Pressure (kPa)": st.column_config.NumberColumn("kPa", width="small", format="%.2f"),
+                    },
+                )
+                st.caption("Enter suction as a positive magnitude: custom_load sets negative pressures to zero.")
         slots.append(dict(type=kind, p=p, width=width, height=height, table=table))
 
     st.form_submit_button("Run analysis", type="primary")
@@ -171,7 +178,9 @@ iS, iM, iD = np.abs(S).argmax(), np.abs(BM).argmax(), np.abs(DFL).argmax()
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Reaction R_A (left)", f"{R_A:,.0f} N")
 m2.metric("Reaction R_B (right)", f"{R_B:,.0f} N")
-m3.metric("Max shear", f"{abs(S[iS]):,.0f} N", f"at x = {x[iS]:,.0f} mm", delta_color="off", delta_arrow="off")
+iSp, iSn = S.argmax(), S.argmin()               # largest positive and largest negative shear (one at each support)
+m3.metric("Max shear", f"{abs(S[iS]):,.0f} N", f"+{S[iSp]:,.0f} N at x = {x[iSp]:,.0f} mm, {S[iSn]:,.0f} N at x = {x[iSn]:,.0f} mm",
+          delta_color="off", delta_arrow="off")
 m4.metric("Max moment", f"{abs(BM[iM]) / 1e6:,.3f} kNm", f"{abs(BM[iM]):,.0f} N·mm at x = {x[iM]:,.0f} mm", delta_color="off", delta_arrow="off")
 m5.metric("Max deflection", f"{abs(DFL[iD]):,.3f} mm", f"span/{H / abs(DFL[iD]):,.0f} at x = {x[iD]:,.0f} mm", delta_color="off", delta_arrow="off")
 
@@ -207,7 +216,7 @@ ax[0].set_title("Total line load", loc="left", fontsize=10)
 
 ax[1].plot(x, S, color=NAVY, lw=2)
 ax[1].axhline(0, color=GREY, lw=0.8)
-ax[1].plot(x[iS], S[iS], "o", color=AMBER)
+ax[1].plot([x[iSp], x[iSn]], [S[iSp], S[iSn]], "o", color=AMBER)   # mark the peak on each side
 ax[1].set_ylabel("Shear (N)")
 ax[1].set_title("Shear force", loc="left", fontsize=10)
 
